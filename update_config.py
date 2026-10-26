@@ -1,6 +1,6 @@
 """Release settings shared by the widget and the release build script."""
 
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.2.2"
 APP_FOLDER_NAME = "JindoWidget"
 
 # Public GitHub repository in OWNER/REPOSITORY form.
