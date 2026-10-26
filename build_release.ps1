@@ -4,9 +4,9 @@ $ErrorActionPreference = "Stop"
 $env:PYTHONUTF8 = "1"
 Set-Location -LiteralPath $PSScriptRoot
 
-& $PythonExe -c "import tkinter; root=tkinter.Tk(); root.withdraw(); root.destroy(); import PIL"
+& $PythonExe -c "from tkinterdnd2 import TkinterDnD; root=TkinterDnD.Tk(); root.withdraw(); root.destroy(); import PIL"
 if ($LASTEXITCODE -ne 0) {
-    throw "선택한 Python에 정상적인 Tcl/Tk와 Pillow가 필요합니다. Python.org의 64비트 설치본에서 Tcl/Tk 기능을 포함해 설치한 뒤 -PythonExe로 경로를 지정해 주세요."
+    throw "선택한 Python에 정상적인 Tcl/Tk와 requirements-build.txt 패키지가 필요합니다."
 }
 & $PythonExe -m PyInstaller --version
 if ($LASTEXITCODE -ne 0) {
@@ -49,7 +49,7 @@ if (Test-Path -LiteralPath $PackageRoot) {
     Remove-Item -LiteralPath $PackageRoot -Recurse -Force
 }
 
-& $PythonExe -m PyInstaller --noconfirm --clean --onedir --windowed `
+& $PythonExe -m PyInstaller --noconfirm --clean --onedir --windowed --collect-all tkinterdnd2 `
     --name $AppName --distpath $DistRoot `
     --workpath (Join-Path $BuildRoot "app") `
     --specpath (Join-Path $BuildRoot "app-spec") app.py

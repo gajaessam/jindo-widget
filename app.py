@@ -33,6 +33,7 @@ TRACK_BG = "#fffaf0"
 LOAD_WARNING = ""
 LOAD_SAVE_BLOCKED = False
 LOAD_RECOVERY_FILE = None
+USE_CLASS_IMAGE = object()
 
 
 def configure_dpi_awareness():
@@ -328,12 +329,13 @@ class Mascot:
         self.update_image()
         self.place()
 
-    def update_image(self, scale=None):
+    def update_image(self, scale=None, image_path=USE_CLASS_IMAGE):
         if scale is None:
             scale = self.app.data.get("character_scale", 100)
         scale = max(50, min(150, int(scale))) / 100
         target_size = (round(56 * scale), round(62 * scale))
-        image_path = self.cls.get("custom_image")
+        if image_path is USE_CLASS_IMAGE:
+            image_path = self.cls.get("custom_image")
         self.has_character_image = False
         if image_path:
             try:
@@ -357,7 +359,7 @@ class Mascot:
         self.image_label.configure(image=self.photo)
         self.update_name_label()
         if hasattr(self, "anchor_y"):
-            self.anchor_y = self.app.track_top - max(82, self.character_height + 20)
+            self.anchor_y = max(0, self.app.track_top - self.character_height - 20)
             if not getattr(self, "dragging", False):
                 self.y = self.anchor_y
                 self.place()
@@ -447,22 +449,11 @@ class Mascot:
 
     def context_menu(self, event):
         menu = tk.Menu(self.win, tearoff=False)
-        menu.add_command(label="반 개수·캐릭터 설정", command=self.app.open_class_settings)
-        menu.add_command(label="반 이름 바꾸기", command=self.rename_class)
-        menu.add_command(label="반 추가", command=self.app.add_class)
+        menu.add_command(label="반·캐릭터 설정", command=self.app.open_class_settings)
         menu.add_separator()
         menu.add_command(label="업데이트 확인", command=self.app.check_for_updates)
         menu.add_command(label="전체 종료", command=self.app.close)
         menu.tk_popup(event.x_root, event.y_root)
-
-    def rename_class(self):
-        name = simpledialog.askstring("반 이름 바꾸기", "캐릭터에 표시할 반 이름을 입력해 주세요.",
-                                      initialvalue=self.cls["name"], parent=self.win)
-        if name and name.strip():
-            self.app.clear_undo()
-            self.cls["name"] = name.strip()
-            self.update_image()
-            self.app.save()
 
 class ClassSettings:
     def __init__(self, app):
@@ -481,6 +472,7 @@ class ClassSettings:
         self.motion = tk.StringVar(value="float" if app.data.get("float_motion", False) else "still")
         self.character_scale = tk.IntVar(value=app.data.get("character_scale", 100))
         self.show_progress_labels = tk.BooleanVar(value=app.data.get("show_progress_labels", True))
+        self.original_float_motion = bool(app.data.get("float_motion", False))
         self.original_show_progress_labels = bool(self.show_progress_labels.get())
 
         top = tk.Frame(self.win, bg=CREAM, padx=12, pady=10)
@@ -491,8 +483,12 @@ class ClassSettings:
                    font=("Malgun Gothic", 10)).pack(side="left", padx=8)
         tk.Button(top, text="반 개수 적용", command=self.resize,
                   bg="#f0ebff", fg=PURPLE, relief="flat", padx=8).pack(side="left")
-        tk.Label(self.win, text="이미지를 반 행에 끌어놓거나 ‘선택’을 누르세요.", bg=CREAM,
-                 fg="#82736b", font=("Malgun Gothic", 9), anchor="w").pack(fill="x", padx=12)
+        tk.Label(
+            self.win,
+            text="이미지는 ‘이미지 선택’을 눌러 지정하세요. 반 삭제는 위쪽 반 개수를 줄이고 적용하세요.",
+            bg=CREAM, fg="#82736b", font=("Malgun Gothic", 8), anchor="w",
+            justify="left", wraplength=window_width - 24
+        ).pack(fill="x", padx=12)
 
         motion_box = tk.Frame(self.win, bg=CREAM, padx=12)
         motion_box.pack(fill="x", pady=(4, 2))
@@ -500,10 +496,10 @@ class ClassSettings:
                  font=("Malgun Gothic", 9, "bold")).pack(side="left")
         tk.Radiobutton(motion_box, text="살짝 둥둥", variable=self.motion, value="float",
                        bg=CREAM, activebackground=CREAM, fg=INK,
-                       font=("Malgun Gothic", 9)).pack(side="left", padx=(8, 0))
+                       font=("Malgun Gothic", 9), command=self.preview_motion).pack(side="left", padx=(8, 0))
         tk.Radiobutton(motion_box, text="멈춤", variable=self.motion, value="still",
                        bg=CREAM, activebackground=CREAM, fg=INK,
-                       font=("Malgun Gothic", 9)).pack(side="left", padx=(4, 0))
+                       font=("Malgun Gothic", 9), command=self.preview_motion).pack(side="left", padx=(4, 0))
         tk.Label(self.win, text="모든 반에 함께 적용돼요. 진도율에 따른 트랙 이동은 유지됩니다.", bg=CREAM,
                  fg="#82736b", font=("Malgun Gothic", 8), anchor="w").pack(fill="x", padx=12)
 
@@ -532,34 +528,79 @@ class ClassSettings:
                   relief="flat", padx=12).pack(side="right", padx=6)
 
         body = tk.Frame(self.win, bg=CREAM)
+        self.scroll_body = body
         body.pack(fill="both", expand=True, padx=12, pady=8)
         self.canvas = tk.Canvas(body, bg=CREAM, bd=0, highlightthickness=0)
         scrollbar = tk.Scrollbar(body, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
+        self.win.bind("<MouseWheel>", self.on_settings_mousewheel, add="+")
+        self.win.bind("<Button-4>", lambda event: self.scroll_settings_rows(event, -1), add="+")
+        self.win.bind("<Button-5>", lambda event: self.scroll_settings_rows(event, 1), add="+")
         self.rows = tk.Frame(self.canvas, bg=CREAM)
         self.rows_id = self.canvas.create_window((0, 0), window=self.rows, anchor="nw")
-        self.rows.bind("<Configure>", lambda _e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(self.rows_id, width=e.width))
+        self.rows.bind("<Configure>", self.schedule_rows_canvas_sync)
+        self.canvas.bind("<Configure>", self.on_rows_canvas_configure)
         self.vars = []
         self.image_labels = []
         self.row_frames = []
-        self._drop_callback = None
-        self._drop_hwnd = None
         self.render_rows()
-        self.win.update_idletasks()
-        self.enable_file_drop()
-        self.win.bind("<Destroy>", self.on_settings_destroy, add="+")
+        self.win.after_idle(self.sync_rows_canvas)
 
         self.win.protocol("WM_DELETE_WINDOW", self.cancel)
+
+    def schedule_rows_canvas_sync(self, _event=None):
+        try:
+            self.win.after_idle(self.sync_rows_canvas)
+        except tk.TclError:
+            pass
+
+    def on_rows_canvas_configure(self, event):
+        self.canvas.itemconfigure(self.rows_id, width=max(1, event.width))
+        self.schedule_rows_canvas_sync()
+
+    def sync_rows_canvas(self):
+        if not self.win.winfo_exists():
+            return
+        self.rows.update_idletasks()
+        width = max(1, self.canvas.winfo_width())
+        view_height = max(1, self.canvas.winfo_height())
+        content_height = max(1, self.rows.winfo_reqheight())
+        total_height = max(view_height, content_height)
+        self.canvas.itemconfigure(self.rows_id, width=width, height=total_height)
+        self.canvas.configure(scrollregion=(0, 0, width, total_height))
+
+    def scroll_settings_rows(self, event, units):
+        widget = event.widget
+        while widget is not None and widget is not self.scroll_body:
+            widget = getattr(widget, "master", None)
+        if widget is None:
+            return
+        self.canvas.yview_scroll(units, "units")
+        return "break"
+
+    def on_settings_mousewheel(self, event):
+        delta = getattr(event, "delta", 0)
+        if not delta:
+            return
+        units = -int(delta / 120)
+        if units == 0:
+            units = -1 if delta > 0 else 1
+        return self.scroll_settings_rows(event, units)
 
     def preview_character_size(self, value):
         self.character_scale_label.configure(text=f"{int(float(value))}%")
         scale = max(50, min(150, int(float(value))))
-        for mascot in self.app.mascots:
-            mascot.update_image(scale=scale)
+        for idx, mascot in enumerate(self.app.mascots):
+            if idx < len(self.vars):
+                mascot.update_image(scale=scale, image_path=self.vars[idx][1].get() or None)
+            else:
+                mascot.update_image(scale=scale)
         self.app.refresh_track()
+
+    def preview_motion(self):
+        self.app.data["float_motion"] = self.motion.get() == "float"
 
     def preview_progress_labels(self):
         self.app.data["show_progress_labels"] = bool(self.show_progress_labels.get())
@@ -567,6 +608,7 @@ class ClassSettings:
 
     def cancel(self):
         scale = self.app.data.get("character_scale", 100)
+        self.app.data["float_motion"] = self.original_float_motion
         self.app.data["show_progress_labels"] = self.original_show_progress_labels
         for mascot in self.app.mascots:
             mascot.update_image(scale=scale)
@@ -595,7 +637,7 @@ class ClassSettings:
             image_label = tk.Label(row, text=image_name, bg="white", fg="#82736b",
                                    font=("Malgun Gothic", 8), width=11, anchor="w")
             image_label.grid(row=0, column=2, sticky="ew", padx=(0, 3))
-            choose_button = tk.Button(row, text="선택", bg="#f0ebff", fg=PURPLE,
+            choose_button = tk.Button(row, text="이미지 선택", bg="#f0ebff", fg=PURPLE,
                                       relief="flat", padx=6,
                                       command=lambda var=image_var, row_idx=idx: self.choose_image(var, row_idx))
             choose_button.grid(row=0, column=3, padx=2)
@@ -603,121 +645,14 @@ class ClassSettings:
                                label.configure(text="파일을 여기에 놓으세요"))
             choose_button.bind("<Leave>", lambda _e, label=image_label, var=image_var:
                                label.configure(text=display_image_name(var.get()) if var.get() else "이미지 없음"))
-            clear_button = tk.Button(row, text="×", bg="white", fg=INK, relief="flat",
-                                     font=("Segoe UI Symbol", 11, "bold"), width=2, padx=0,
-                                     command=lambda var=image_var, label=image_label: self.reset_image(var, label))
+            clear_button = tk.Button(row, text="이미지 삭제", bg="#f0ebff", fg=PURPLE,
+                                     relief="flat", padx=6,
+                                     command=lambda var=image_var, label=image_label, row_idx=idx:
+                                     self.reset_image(var, label, row_idx))
             clear_button.grid(row=0, column=4, padx=(2, 0))
-            clear_button.bind("<Enter>", lambda _e, label=image_label:
-                              label.configure(text="이미지 비우기"))
-            clear_button.bind("<Leave>", lambda _e, label=image_label, var=image_var:
-                              label.configure(text=display_image_name(var.get()) if var.get() else "이미지 없음"))
             self.vars.append((name_var, image_var))
             self.image_labels.append(image_label)
             self.row_frames.append(row)
-
-    def enable_file_drop(self):
-        if os.name != "nt":
-            return
-        subclass_installed = False
-        try:
-            import ctypes
-            from ctypes import wintypes
-            self._ctypes = ctypes
-            self._wintypes = wintypes
-            self._comctl32 = ctypes.WinDLL("comctl32", use_last_error=True)
-            self._shell32 = ctypes.WinDLL("shell32", use_last_error=True)
-            self._subclass_proc_type = ctypes.WINFUNCTYPE(
-                ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, wintypes.WPARAM,
-                wintypes.LPARAM, ctypes.c_size_t, ctypes.c_size_t)
-            self._drop_callback = self._subclass_proc_type(self.drop_window_proc)
-            self._drop_hwnd = wintypes.HWND(self.win.winfo_id())
-            self._set_window_subclass = self._comctl32.SetWindowSubclass
-            self._set_window_subclass.argtypes = [wintypes.HWND, self._subclass_proc_type,
-                                                  ctypes.c_size_t, ctypes.c_size_t]
-            self._set_window_subclass.restype = wintypes.BOOL
-            self._remove_window_subclass = self._comctl32.RemoveWindowSubclass
-            self._remove_window_subclass.argtypes = [wintypes.HWND, self._subclass_proc_type,
-                                                     ctypes.c_size_t]
-            self._remove_window_subclass.restype = wintypes.BOOL
-            if not self._set_window_subclass(self._drop_hwnd, self._drop_callback, 1, 0):
-                raise OSError(ctypes.get_last_error(), "창 파일 드롭 기능을 설정하지 못했습니다.")
-            subclass_installed = True
-            self._shell32.DragAcceptFiles.argtypes = [wintypes.HWND, wintypes.BOOL]
-            self._shell32.DragAcceptFiles.restype = None
-            self._shell32.DragAcceptFiles(self._drop_hwnd, True)
-            self._shell32.DragQueryFileW.argtypes = [wintypes.HANDLE, wintypes.UINT,
-                                                    wintypes.LPWSTR, wintypes.UINT]
-            self._shell32.DragQueryFileW.restype = wintypes.UINT
-            self._shell32.DragFinish.argtypes = [wintypes.HANDLE]
-            self._shell32.DragQueryPoint.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
-            self._shell32.DragQueryPoint.restype = wintypes.BOOL
-            self._comctl32.DefSubclassProc.argtypes = [wintypes.HWND, wintypes.UINT,
-                                                       wintypes.WPARAM, wintypes.LPARAM]
-            self._comctl32.DefSubclassProc.restype = ctypes.c_ssize_t
-        except (AttributeError, OSError, TypeError) as exc:
-            if subclass_installed:
-                try:
-                    self._shell32.DragAcceptFiles(self._drop_hwnd, False)
-                    self._remove_window_subclass(self._drop_hwnd, self._drop_callback, 1)
-                except (AttributeError, OSError, TypeError):
-                    pass
-            self._drop_callback = None
-            self._drop_hwnd = None
-            messagebox.showinfo("이미지 끌어놓기", f"이 환경에서는 끌어놓기를 사용할 수 없어요.\n{exc}",
-                                parent=self.win)
-
-    def drop_window_proc(self, hwnd, message, wparam, lparam, subclass_id, ref_data):
-        if message == 0x0233:  # WM_DROPFILES
-            try:
-                self.receive_dropped_file(wparam)
-            except Exception as exc:
-                messagebox.showerror("이미지 끌어놓기", f"이미지를 적용하지 못했어요.\n{exc}",
-                                     parent=self.win)
-            finally:
-                self._shell32.DragFinish(wparam)
-            return 0
-        return self._comctl32.DefSubclassProc(hwnd, message, wparam, lparam)
-
-    def receive_dropped_file(self, drop_handle):
-        ctypes = self._ctypes
-        wintypes = self._wintypes
-
-        class POINT(ctypes.Structure):
-            _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
-
-        point = POINT()
-        if not self._shell32.DragQueryPoint(drop_handle, ctypes.byref(point)):
-            return
-        root_x = self.win.winfo_rootx() + point.x
-        root_y = self.win.winfo_rooty() + point.y
-        row_idx = next((i for i, row in enumerate(self.row_frames)
-                        if row.winfo_ismapped()
-                        and row.winfo_rootx() <= root_x < row.winfo_rootx() + row.winfo_width()
-                        and row.winfo_rooty() <= root_y < row.winfo_rooty() + row.winfo_height()), None)
-        if row_idx is None:
-            messagebox.showinfo("이미지 끌어놓기", "이미지를 지정할 반의 행 위에 놓아 주세요.",
-                                parent=self.win)
-            return
-        count = self._shell32.DragQueryFileW(drop_handle, 0xFFFFFFFF, None, 0)
-        if count != 1:
-            messagebox.showinfo("이미지 끌어놓기", "한 번에 이미지 파일 하나씩 놓아 주세요.",
-                                parent=self.win)
-            return
-        length = self._shell32.DragQueryFileW(drop_handle, 0, None, 0)
-        path_buffer = ctypes.create_unicode_buffer(length + 1)
-        self._shell32.DragQueryFileW(drop_handle, 0, path_buffer, length + 1)
-        self.apply_image_path(path_buffer.value, row_idx)
-
-    def on_settings_destroy(self, event):
-        if event.widget is not self.win or not self._drop_callback or not self._drop_hwnd:
-            return
-        try:
-            self._shell32.DragAcceptFiles(self._drop_hwnd, False)
-            self._remove_window_subclass(self._drop_hwnd, self._drop_callback, 1)
-        except (AttributeError, OSError, TypeError):
-            pass
-        self._drop_callback = None
-        self._drop_hwnd = None
 
     def choose_image(self, image_var, row_idx):
         path = filedialog.askopenfilename(
@@ -732,13 +667,20 @@ class ClassSettings:
             imported = self.app.import_character(path)
             self.vars[row_idx][1].set(imported)
             self.image_labels[row_idx].configure(text=display_image_name(imported))
+            if row_idx < len(self.app.mascots):
+                self.app.mascots[row_idx].update_image(
+                    scale=self.character_scale.get(), image_path=imported)
+                self.app.refresh_track()
         except (OSError, ValueError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
             messagebox.showerror("이미지 열기", f"이 이미지는 사용할 수 없어요.\n{exc}", parent=self.win)
 
-    @staticmethod
-    def reset_image(image_var, image_label):
+    def reset_image(self, image_var, image_label, row_idx):
         image_var.set("")
         image_label.configure(text="이미지 없음")
+        if row_idx < len(self.app.mascots):
+            self.app.mascots[row_idx].update_image(
+                scale=self.character_scale.get(), image_path=None)
+            self.app.refresh_track()
 
     def resize(self):
         try:
@@ -865,7 +807,9 @@ class ProgressBubble:
         header.pack(fill="x")
         tk.Label(header, text=f"{self.cls['name']} 진도", bg=CREAM, fg=INK,
                  font=("Malgun Gothic", 11, "bold")).pack(side="left")
-        tk.Button(header, text="×", command=self.close, bg=CREAM, fg="#82736b", relief="flat",
+        tk.Button(header, text="×", command=self.close, bg=CREAM, fg="#82736b",
+                  activebackground=CREAM, activeforeground=INK, relief="flat",
+                  bd=0, highlightthickness=0, takefocus=False,
                   font=("Malgun Gothic", 14, "bold"), padx=6, pady=0).pack(side="right")
         lesson_row = tk.Frame(outer, bg=CREAM)
         lesson_row.pack(fill="x", pady=(8, 2))
@@ -1394,7 +1338,7 @@ class App:
                                         finish_x + 5 + col * 4, self.track_top - 24 + row * 4,
                                         fill=color, outline=color)
         for idx, mascot in enumerate(getattr(self, "mascots", [])):
-            mascot.anchor_y = max(0, self.track_top - max(82, mascot.character_height + 20))
+            mascot.anchor_y = max(0, self.track_top - mascot.character_height - 20)
             mascot.update_name_label()
             mascot.target_x, mascot.target_y = mascot.pick_target()
 
@@ -1435,26 +1379,6 @@ class App:
         if self.bubble and self.bubble.win.winfo_exists():
             self.bubble.close()
         self.bubble = ProgressBubble(self, idx)
-
-    def add_class(self):
-        if len(self.data["classes"]) >= 20:
-            messagebox.showinfo("반 추가", "반은 최대 20개까지 설정할 수 있어요.",
-                                parent=self.mascots[0].win if self.mascots else self.root)
-            return
-        parent = self.mascots[0].win if self.mascots else self.root
-        name = simpledialog.askstring("반 추가", "반 이름을 입력해 주세요.\n예: 11반", parent=parent)
-        if name and name.strip():
-            self.clear_undo()
-            idx = len(self.data["classes"])
-            cls = {"name": name.strip(), "image": 0, "custom_image": None,
-                   "progress": [[False] * len(lesson["items"]) for lesson in self.data["plan"]],
-                   "memo": ""}
-            self.data["classes"].append(cls)
-            mascot = Mascot(self, idx, cls)
-            self.mascots.append(mascot)
-            self.refresh_track()
-            mascot.animate()
-            self.save()
 
     def clear_undo(self):
         self.undo_snapshot = None

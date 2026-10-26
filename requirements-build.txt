@@ -1,2 +1,2 @@
-Pillow>=10.0
+-r requirements-runtime.txt
 PyInstaller>=6.0
