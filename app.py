@@ -450,6 +450,7 @@ class Mascot:
     def context_menu(self, event):
         menu = tk.Menu(self.win, tearoff=False)
         menu.add_command(label="반·캐릭터 설정", command=self.app.open_class_settings)
+        menu.add_command(label="수업 계획 설정", command=self.app.open_plan_settings)
         menu.add_separator()
         menu.add_command(label="업데이트 확인", command=self.app.check_for_updates)
         menu.add_command(label="전체 종료", command=self.app.close)
@@ -641,10 +642,6 @@ class ClassSettings:
                                       relief="flat", padx=6,
                                       command=lambda var=image_var, row_idx=idx: self.choose_image(var, row_idx))
             choose_button.grid(row=0, column=3, padx=2)
-            choose_button.bind("<Enter>", lambda _e, label=image_label:
-                               label.configure(text="파일을 여기에 놓으세요"))
-            choose_button.bind("<Leave>", lambda _e, label=image_label, var=image_var:
-                               label.configure(text=display_image_name(var.get()) if var.get() else "이미지 없음"))
             clear_button = tk.Button(row, text="이미지 삭제", bg="#f0ebff", fg=PURPLE,
                                      relief="flat", padx=6,
                                      command=lambda var=image_var, label=image_label, row_idx=idx:
@@ -719,6 +716,262 @@ class ClassSettings:
         if not self.app.save():
             return
         self.win.destroy()
+
+
+class PlanSettings:
+    def __init__(self, app):
+        self.app = app
+        self.plan = copy.deepcopy(app.data["plan"])
+        self.progress = [copy.deepcopy(cls["progress"]) for cls in app.data["classes"]]
+        self.lesson_selection = copy.deepcopy(app.data.get("lesson", {}))
+        self.win = tk.Toplevel(app.root)
+        self.win.title("수업 계획 설정")
+        self.win.configure(bg=CREAM)
+        self.win.wm_attributes("-topmost", False)
+        window_width = max(1, min(600, app.width - 24))
+        window_height = max(1, min(650, app.height - 48))
+        x = max(0, (app.width - window_width) // 2)
+        y = max(0, (app.height - window_height) // 2)
+        self.win.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        self.win.minsize(min(430, window_width), min(360, window_height))
+
+        header = tk.Frame(self.win, bg=CREAM, padx=14, pady=10)
+        header.pack(fill="x")
+        tk.Label(header, text="수업 계획 설정", bg=CREAM, fg=INK,
+                 font=("Malgun Gothic", 12, "bold")).pack(anchor="w")
+        tk.Label(header, text="여기서 저장한 차시와 활동은 모든 반에 함께 적용돼요.",
+                 bg=CREAM, fg="#82736b", font=("Malgun Gothic", 8)).pack(anchor="w", pady=(2, 0))
+
+        footer = tk.Frame(self.win, bg=CREAM, padx=12, pady=8)
+        footer.pack(side="bottom", fill="x")
+        tk.Button(footer, text="닫기", command=self.cancel, bg="white", fg=INK,
+                  relief="flat", padx=10).pack(side="right")
+        tk.Button(footer, text="저장", command=self.save, bg=PURPLE, fg="white",
+                  relief="flat", padx=12).pack(side="right", padx=6)
+
+        body = tk.Frame(self.win, bg=CREAM)
+        body.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        self.canvas = tk.Canvas(body, bg=CREAM, bd=0, highlightthickness=0)
+        scrollbar = tk.Scrollbar(body, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.content = tk.Frame(self.canvas, bg=CREAM)
+        self.content_id = self.canvas.create_window((0, 0), window=self.content, anchor="nw")
+        self.content.bind("<Configure>", self.sync_scrollregion)
+        self.canvas.bind("<Configure>", self.resize_content)
+        self.win.bind("<MouseWheel>", self.on_mousewheel, add="+")
+        self.render()
+        self.win.protocol("WM_DELETE_WINDOW", self.cancel)
+        self.win.lift()
+
+    def sync_scrollregion(self, _event=None):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def resize_content(self, event):
+        self.canvas.itemconfigure(self.content_id, width=max(1, event.width))
+
+    def on_mousewheel(self, event):
+        delta = getattr(event, "delta", 0)
+        if not delta:
+            return
+        units = -int(delta / 120)
+        if units == 0:
+            units = -1 if delta > 0 else 1
+        self.canvas.yview_scroll(units, "units")
+        return "break"
+
+    def render(self):
+        position = self.canvas.yview()[0] if self.content.winfo_children() else 0.0
+        for child in self.content.winfo_children():
+            child.destroy()
+
+        for lesson_idx, lesson in enumerate(self.plan):
+            card = tk.Frame(self.content, bg="white", padx=8, pady=7,
+                            highlightthickness=1, highlightbackground="#eadfd4")
+            card.pack(fill="x", pady=4)
+            header = tk.Frame(card, bg="white")
+            header.pack(fill="x")
+            tk.Label(header, text=f"{lesson_idx + 1}. {lesson['name']}", bg="white", fg=INK,
+                     font=("Malgun Gothic", 10, "bold"), anchor="w").pack(
+                         side="left", fill="x", expand=True)
+            tk.Button(header, text="↑", bg="white", fg=INK, relief="flat", padx=4,
+                      state="normal" if lesson_idx > 0 else "disabled",
+                      command=lambda idx=lesson_idx: self.move_lesson(idx, -1)).pack(side="left")
+            tk.Button(header, text="↓", bg="white", fg=INK, relief="flat", padx=4,
+                      state="normal" if lesson_idx < len(self.plan) - 1 else "disabled",
+                      command=lambda idx=lesson_idx: self.move_lesson(idx, 1)).pack(side="left")
+            tk.Button(header, text="수정", bg="#f0ebff", fg=PURPLE, relief="flat", padx=6,
+                      command=lambda idx=lesson_idx: self.edit_lesson(idx)).pack(side="left", padx=2)
+            tk.Button(header, text="삭제", bg="white", fg="#82736b", relief="flat", padx=6,
+                      state="normal" if len(self.plan) > 1 else "disabled",
+                      command=lambda idx=lesson_idx: self.delete_lesson(idx)).pack(side="left")
+
+            if lesson["items"]:
+                for item_idx, item in enumerate(lesson["items"]):
+                    row = tk.Frame(card, bg="#fffdf9", padx=5, pady=4)
+                    row.pack(fill="x", pady=(5 if item_idx == 0 else 2, 0))
+                    tk.Label(row, text=f"{item_idx + 1}.", bg="#fffdf9", fg="#82736b",
+                             font=("Malgun Gothic", 8), width=3).pack(side="left")
+                    tk.Label(row, text=item["text"], bg="#fffdf9", fg=INK,
+                             font=("Malgun Gothic", 9), anchor="w", justify="left",
+                             wraplength=280).pack(side="left", fill="x", expand=True)
+                    tk.Button(row, text="↑", bg="#fffdf9", fg=INK, relief="flat", padx=3,
+                              state="normal" if item_idx > 0 else "disabled",
+                              command=lambda li=lesson_idx, ii=item_idx:
+                              self.move_item(li, ii, -1)).pack(side="left")
+                    tk.Button(row, text="↓", bg="#fffdf9", fg=INK, relief="flat", padx=3,
+                              state="normal" if item_idx < len(lesson["items"]) - 1 else "disabled",
+                              command=lambda li=lesson_idx, ii=item_idx:
+                              self.move_item(li, ii, 1)).pack(side="left")
+                    tk.Button(row, text="수정", bg="#f0ebff", fg=PURPLE, relief="flat", padx=5,
+                              command=lambda li=lesson_idx, ii=item_idx:
+                              self.edit_item(li, ii)).pack(side="left", padx=2)
+                    tk.Button(row, text="삭제", bg="white", fg="#82736b", relief="flat", padx=5,
+                              command=lambda li=lesson_idx, ii=item_idx:
+                              self.delete_item(li, ii)).pack(side="left")
+            else:
+                tk.Label(card, text="아직 활동이 없어요.", bg="white", fg="#a3968d",
+                         font=("Malgun Gothic", 8)).pack(anchor="w", padx=5, pady=(6, 0))
+
+            tk.Button(card, text="+ 활동 추가", bg="white", fg=PURPLE, relief="flat",
+                      command=lambda idx=lesson_idx: self.add_item(idx)).pack(anchor="w", pady=(6, 0))
+
+        tk.Button(self.content, text="+ 차시 추가", bg="#f0ebff", fg=PURPLE, relief="flat",
+                  padx=12, pady=5, command=self.add_lesson).pack(anchor="w", pady=(5, 10))
+        self.win.after_idle(lambda: self.canvas.yview_moveto(position))
+
+    def add_lesson(self):
+        name = simpledialog.askstring("차시 추가", "차시 이름을 입력해 주세요.",
+                                      initialvalue=f"{len(self.plan) + 1}차시", parent=self.win)
+        if name and name.strip():
+            self.plan.append({"name": name.strip(), "items": []})
+            for marks in self.progress:
+                marks.append([])
+            self.render()
+
+    def edit_lesson(self, lesson_idx):
+        lesson = self.plan[lesson_idx]
+        name = simpledialog.askstring("차시 이름 수정", "차시 이름을 입력해 주세요.",
+                                      initialvalue=lesson["name"], parent=self.win)
+        if name is None:
+            return
+        if not name.strip():
+            messagebox.showinfo("차시 이름 수정", "이름을 입력해 주세요.", parent=self.win)
+            return
+        lesson["name"] = name.strip()
+        self.render()
+
+    def move_lesson(self, lesson_idx, offset):
+        target = lesson_idx + offset
+        if not 0 <= target < len(self.plan):
+            return
+        self.plan[lesson_idx], self.plan[target] = self.plan[target], self.plan[lesson_idx]
+        for marks in self.progress:
+            marks[lesson_idx], marks[target] = marks[target], marks[lesson_idx]
+        for key, selected_idx in list(self.lesson_selection.items()):
+            if selected_idx == lesson_idx:
+                self.lesson_selection[key] = target
+            elif selected_idx == target:
+                self.lesson_selection[key] = lesson_idx
+        self.render()
+
+    def delete_lesson(self, lesson_idx):
+        if len(self.plan) <= 1:
+            return
+        lesson_name = self.plan[lesson_idx]["name"]
+        if not messagebox.askyesno(
+                "차시 삭제",
+                f"모든 반에서 ‘{lesson_name}’ 차시와 그 안의 활동·완료 기록이 삭제됩니다.\n계속할까요?",
+                parent=self.win):
+            return
+        self.plan.pop(lesson_idx)
+        for marks in self.progress:
+            if lesson_idx < len(marks):
+                marks.pop(lesson_idx)
+        for key, old_index in list(self.lesson_selection.items()):
+            if old_index > lesson_idx:
+                self.lesson_selection[key] = old_index - 1
+            elif old_index == lesson_idx:
+                self.lesson_selection[key] = min(lesson_idx, len(self.plan) - 1)
+        self.render()
+
+    def add_item(self, lesson_idx):
+        text = simpledialog.askstring("활동 추가", "활동 내용을 입력해 주세요.", parent=self.win)
+        if text and text.strip():
+            self.plan[lesson_idx]["items"].append({"text": text.strip()})
+            for marks in self.progress:
+                marks[lesson_idx].append(False)
+            self.render()
+
+    def edit_item(self, lesson_idx, item_idx):
+        item = self.plan[lesson_idx]["items"][item_idx]
+        text = simpledialog.askstring("활동 수정", "활동 내용을 입력해 주세요.",
+                                      initialvalue=item["text"], parent=self.win)
+        if text is None:
+            return
+        if not text.strip():
+            messagebox.showinfo("활동 수정", "내용을 입력해 주세요.", parent=self.win)
+            return
+        item["text"] = text.strip()
+        self.render()
+
+    def move_item(self, lesson_idx, item_idx, offset):
+        target = item_idx + offset
+        items = self.plan[lesson_idx]["items"]
+        if not 0 <= target < len(items):
+            return
+        items[item_idx], items[target] = items[target], items[item_idx]
+        for marks in self.progress:
+            lesson_marks = marks[lesson_idx]
+            lesson_marks[item_idx], lesson_marks[target] = lesson_marks[target], lesson_marks[item_idx]
+        self.render()
+
+    def delete_item(self, lesson_idx, item_idx):
+        item_text = self.plan[lesson_idx]["items"][item_idx]["text"]
+        if not messagebox.askyesno(
+                "활동 삭제",
+                f"모든 반에서 ‘{item_text}’ 활동과 완료 기록이 삭제됩니다.\n계속할까요?",
+                parent=self.win):
+            return
+        self.plan[lesson_idx]["items"].pop(item_idx)
+        for marks in self.progress:
+            if lesson_idx < len(marks) and item_idx < len(marks[lesson_idx]):
+                marks[lesson_idx].pop(item_idx)
+        self.render()
+
+    def save(self):
+        previous_plan = self.app.data["plan"]
+        previous_lesson = self.app.data.get("lesson", {})
+        previous_progress = [cls["progress"] for cls in self.app.data["classes"]]
+        self.app.set_undo()
+        self.app.data["plan"] = copy.deepcopy(self.plan)
+        self.app.data["lesson"] = copy.deepcopy(self.lesson_selection)
+        for idx, cls in enumerate(self.app.data["classes"]):
+            if idx < len(self.progress):
+                cls["progress"] = copy.deepcopy(self.progress[idx])
+            else:
+                cls["progress"] = [[False] * len(lesson["items"]) for lesson in self.plan]
+        self.app.refresh_track()
+        if not self.app.save():
+            self.app.data["plan"] = previous_plan
+            self.app.data["lesson"] = previous_lesson
+            for cls, marks in zip(self.app.data["classes"], previous_progress):
+                cls["progress"] = marks
+            self.app.clear_undo()
+            self.app.refresh_track()
+            return
+        if self.app.bubble and self.app.bubble.win.winfo_exists():
+            self.app.bubble.refresh()
+        self.close_window()
+
+    def cancel(self):
+        self.close_window()
+
+    def close_window(self):
+        self.app.plan_settings = None
+        if self.win.winfo_exists():
+            self.win.destroy()
 
 
 class ProgressBubble:
@@ -1092,6 +1345,7 @@ class App:
         self.create_track()
         self.mascots = []
         self.bubble = None
+        self.plan_settings = None
         for idx, cls in enumerate(self.data["classes"]):
             mascot = Mascot(self, idx, cls)
             self.mascots.append(mascot)
@@ -1119,6 +1373,13 @@ class App:
 
     def open_class_settings(self):
         ClassSettings(self)
+
+    def open_plan_settings(self):
+        if self.plan_settings and self.plan_settings.win.winfo_exists():
+            self.plan_settings.win.lift()
+            self.plan_settings.win.focus_force()
+            return
+        self.plan_settings = PlanSettings(self)
 
     def check_for_updates(self, manual=True):
         """Check GitHub off the UI thread; install only after the user agrees."""
