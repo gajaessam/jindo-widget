@@ -450,7 +450,7 @@ class Mascot:
 
     def context_menu(self, event):
         menu = tk.Menu(self.win, tearoff=False)
-        menu.add_command(label="반·캐릭터 설정", command=self.app.open_class_settings)
+        menu.add_command(label="반 · 캐릭터 설정", command=self.app.open_class_settings)
         menu.add_command(label="수업 계획 설정", command=self.app.open_plan_settings)
         menu.add_separator()
         auto_start_var = tk.BooleanVar(value=self.app.is_auto_start_enabled())
