@@ -32,6 +32,6 @@ jobs:
         with:
           name: JindoWidget-Windows
           path: |
-            release/JindoWidget-Setup-*.exe
+            release/진도 위젯-v*.exe
             release/UsagiJindo-v*-Windows-x64.zip
           if-no-files-found: error
