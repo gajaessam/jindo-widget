@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  contents: write
 
 jobs:
   build:
@@ -32,6 +33,38 @@ jobs:
         with:
           name: JindoWidget-Windows
           path: |
+            release/JindoWidget-Setup-*.exe
             release/진도 위젯-v*.exe
             release/UsagiJindo-v*-Windows-x64.zip
           if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = python -c "from update_config import APP_VERSION; print(APP_VERSION)"
+          if ($LASTEXITCODE -ne 0) { throw "Could not read APP_VERSION from update_config.py." }
+          $version = $version.Trim()
+          $tag = "v$version"
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') { throw "APP_VERSION must use X.Y.Z format." }
+
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists. Skipping publication."
+            exit 0
+          }
+
+          $installer = Join-Path "release" "진도 위젯-v${version}.exe"
+          $updateZip = Join-Path "release" "UsagiJindo-v${version}-Windows-x64.zip"
+          if (!(Test-Path -LiteralPath $installer)) { throw "Installer not found: $installer" }
+          if (!(Test-Path -LiteralPath $updateZip)) { throw "Update ZIP not found: $updateZip" }
+
+          gh release create $tag $installer $updateZip `
+            --repo $env:GITHUB_REPOSITORY `
+            --title "진도 위젯 $tag" `
+            --notes "진도 위젯 $tag 자동 배포" `
+            --target $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw "GitHub Release publication failed for $tag." }
