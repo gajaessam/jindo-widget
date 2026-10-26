@@ -31,7 +31,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: JindoWidget-Windows
-          path: release/진도 위젯-v*.exe
+          path: release/JindoWidget-Setup-v*.exe
           if-no-files-found: error
 
       - name: Publish GitHub Release
@@ -53,7 +53,7 @@ jobs:
             exit 0
           }
 
-          $installer = Join-Path "release" "진도 위젯-v${version}.exe"
+          $installer = Join-Path "release" "JindoWidget-Setup-v${version}.exe"
           if (!(Test-Path -LiteralPath $installer)) { throw "Installer not found: $installer" }
 
           gh release create $tag $installer `
