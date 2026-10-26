@@ -47,3 +47,10 @@ Name: "{autodesktop}\진도 위젯"; Filename: "{app}\JindoWidget.exe"; WorkingD
 
 [Run]
 Filename: "{app}\JindoWidget.exe"; Description: "진도 위젯 실행"; Flags: nowait postinstall skipifsilent
+
+[Code]
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+    RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'JindoWidget');
+end;

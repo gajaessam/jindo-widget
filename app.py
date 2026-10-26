@@ -10,6 +10,7 @@ import threading
 import time
 import tkinter as tk
 import uuid
+import winreg
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog
 from PIL import Image, ImageDraw, ImageOps, ImageTk, UnidentifiedImageError
@@ -32,6 +33,8 @@ LOAD_WARNING = ""
 LOAD_SAVE_BLOCKED = False
 LOAD_RECOVERY_FILE = None
 USE_CLASS_IMAGE = object()
+AUTO_START_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+AUTO_START_VALUE = "JindoWidget"
 
 
 def configure_dpi_awareness():
@@ -450,6 +453,11 @@ class Mascot:
         menu.add_command(label="반·캐릭터 설정", command=self.app.open_class_settings)
         menu.add_command(label="수업 계획 설정", command=self.app.open_plan_settings)
         menu.add_separator()
+        auto_start_var = tk.BooleanVar(value=self.app.is_auto_start_enabled())
+        menu.add_checkbutton(
+            label="자동 실행", variable=auto_start_var,
+            state="normal" if self.app.auto_start_supported() else "disabled",
+            command=lambda var=auto_start_var: self.app.toggle_auto_start(bool(var.get())))
         menu.add_command(label="업데이트 확인", command=self.app.check_for_updates)
         menu.add_command(label="전체 종료", command=self.app.close)
         menu.tk_popup(event.x_root, event.y_root)
@@ -1371,6 +1379,54 @@ class App:
 
     def open_class_settings(self):
         ClassSettings(self)
+
+    def auto_start_supported(self):
+        return os.name == "nt" and bool(getattr(sys, "frozen", False))
+
+    def is_auto_start_enabled(self):
+        if not self.auto_start_supported():
+            return False
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTO_START_KEY) as key:
+                value, _kind = winreg.QueryValueEx(key, AUTO_START_VALUE)
+        except FileNotFoundError:
+            return False
+        expected = f'"{Path(sys.executable).resolve()}"'
+        return str(value).strip() == expected
+
+    def set_auto_start(self, enabled, parent=None):
+        if not self.auto_start_supported():
+            return False
+        try:
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, AUTO_START_KEY) as key:
+                if enabled:
+                    command = f'"{Path(sys.executable).resolve()}"'
+                    winreg.SetValueEx(key, AUTO_START_VALUE, 0, winreg.REG_SZ, command)
+                else:
+                    try:
+                        winreg.DeleteValue(key, AUTO_START_VALUE)
+                    except FileNotFoundError:
+                        pass
+            return True
+        except OSError as exc:
+            messagebox.showerror(
+                "자동 실행 설정",
+                f"Windows 시작프로그램 설정을 변경하지 못했어요.\n\n{exc}",
+                parent=parent or self.root)
+            return False
+
+    def toggle_auto_start(self, enabled):
+        parent = self.mascots[0].win if self.mascots else self.root
+        if not self.auto_start_supported():
+            messagebox.showinfo(
+                "자동 실행", "자동 실행 설정은 설치된 Windows 앱에서 사용할 수 있어요.",
+                parent=parent)
+            return
+        if self.set_auto_start(enabled, parent=parent) and enabled:
+            messagebox.showinfo(
+                "자동 실행",
+                "Windows에 로그인하면 진도 위젯이 자동으로 실행됩니다.",
+                parent=parent)
 
     def open_plan_settings(self):
         if self.plan_settings and self.plan_settings.win.winfo_exists():
