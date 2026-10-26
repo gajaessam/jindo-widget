@@ -22,7 +22,9 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64
+DisableDirPage=yes
 DisableProgramGroupPage=yes
+UsePreviousAppDir=no
 CloseApplications=yes
 RestartApplications=no
 
@@ -34,6 +36,10 @@ Name: "desktopicon"; Description: "바탕 화면에 바로 가기 만들기"; Gr
 
 [Files]
 Source: "{#AppBundle}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[InstallDelete]
+Type: files; Name: "{app}\UsagiJindoUpdater.exe"
+Type: filesandordirs; Name: "{app}\_internal\tkinterdnd2"
 
 [Icons]
 Name: "{autoprograms}\진도 위젯"; Filename: "{app}\JindoWidget.exe"; WorkingDir: "{app}"

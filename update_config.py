@@ -6,6 +6,7 @@ APP_FOLDER_NAME = "JindoWidget"
 # Public GitHub repository in OWNER/REPOSITORY form.
 GITHUB_REPOSITORY = "gajaessam/jindo-widget"
 
-RELEASE_ASSET_TEMPLATE = "UsagiJindo-v{version}-Windows-x64.zip"
+RELEASE_ASSET_TEMPLATE = "진도 위젯-v{version}.exe"
+# Kept only so the unused legacy updater.py remains readable; new builds do not package it.
 UPDATER_EXECUTABLE_NAME = "UsagiJindoUpdater.exe"
 MAX_UPDATE_BYTES = 512 * 1024 * 1024

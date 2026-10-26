@@ -5,9 +5,7 @@ import os
 import queue
 import random
 import shutil
-import subprocess
 import sys
-import tempfile
 import threading
 import time
 import tkinter as tk
@@ -16,7 +14,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog
 from PIL import Image, ImageDraw, ImageOps, ImageTk, UnidentifiedImageError
 from update_client import check_for_update, download_release_asset, repository_is_configured
-from update_config import APP_FOLDER_NAME, APP_VERSION, UPDATER_EXECUTABLE_NAME
+from update_config import APP_VERSION
 
 BASE = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("APPDATA", str(BASE))) / "UsagiJindo"
@@ -1382,7 +1380,7 @@ class App:
         self.plan_settings = PlanSettings(self)
 
     def check_for_updates(self, manual=True):
-        """Check GitHub off the UI thread; install only after the user agrees."""
+        """Check GitHub off the UI thread; download the installer on request."""
         parent = self.mascots[0].win if self.mascots else self.root
         if self.update_busy:
             if manual:
@@ -1434,17 +1432,32 @@ class App:
             notes = payload.get("notes", "")
             if len(notes) > 1200:
                 notes = notes[:1200].rstrip() + "…"
-            prompt = (f"새 버전 v{payload['version']}을 설치할 수 있어요.\n"
+            prompt = (f"새 버전 v{payload['version']}을 받을 수 있어요.\n"
                       f"현재 버전: v{APP_VERSION}\n\n"
                       f"{notes or '릴리스 설명이 없습니다.'}\n\n"
-                      "지금 다운로드하고 앱을 다시 시작할까요?")
+                      "설치 파일을 다운로드할까요?\n"
+                      "GitHub 페이지는 열리지 않으며 자동으로 설치되지는 않아요.")
             if messagebox.askyesno("새 업데이트", prompt, parent=parent):
                 self.start_update_download(payload)
             return
         if event == "downloaded":
-            update, archive = payload
+            update, installer = payload
             self.finish_update_status()
-            self.launch_update_helper(update, archive)
+            self.update_busy = False
+            messagebox.showinfo(
+                "다운로드 완료",
+                f"진도 위젯 v{update['version']} 설치 파일을 저장했어요.\n\n"
+                f"{installer}\n\n"
+                "현재 프로그램을 종료한 뒤 이 설치 파일을 실행해 주세요.\n"
+                "진도와 반 설정은 그대로 유지됩니다.",
+                parent=parent)
+            try:
+                os.startfile(str(installer.parent))
+            except OSError as exc:
+                messagebox.showerror(
+                    "다운로드 폴더 열기",
+                    f"설치 파일은 저장됐지만 폴더를 열지 못했어요.\n\n{exc}",
+                    parent=parent)
             return
         if event == "download_error":
             self.finish_update_status()
@@ -1454,21 +1467,20 @@ class App:
     def start_update_download(self, update):
         if not getattr(sys, "frozen", False):
             return
-        install_dir = Path(sys.executable).resolve().parent
-        if install_dir.name.casefold() != APP_FOLDER_NAME.casefold():
-            messagebox.showerror(
-                "업데이트 설치",
-                f"앱 폴더 이름이 '{APP_FOLDER_NAME}'이어야 안전하게 업데이트할 수 있어요.\n"
-                "배포 ZIP 안의 앱 폴더 이름을 유지해 주세요.",
-                parent=self.mascots[0].win if self.mascots else self.root)
+        parent = self.mascots[0].win if self.mascots else self.root
+        downloads = Path.home() / "Downloads"
+        initial_dir = downloads if downloads.is_dir() else Path.home()
+        selected = filedialog.asksaveasfilename(
+            parent=parent,
+            title="업데이트 설치 파일 저장",
+            initialdir=str(initial_dir),
+            initialfile=update["asset_name"],
+            defaultextension=".exe",
+            filetypes=[("Windows 설치 파일", "*.exe")],
+            confirmoverwrite=True)
+        if not selected:
             return
-        helper = install_dir / UPDATER_EXECUTABLE_NAME
-        if not helper.is_file():
-            messagebox.showerror(
-                "업데이트 설치",
-                "업데이트 도우미 파일을 찾지 못했어요.\n최신 배포 ZIP으로 앱을 다시 설치해 주세요.",
-                parent=self.mascots[0].win if self.mascots else self.root)
-            return
+        destination = Path(selected)
 
         self.update_busy = True
         self.update_status_win = tk.Toplevel(self.root)
@@ -1481,7 +1493,7 @@ class App:
         y = max(0, (self.height - height) // 2)
         self.update_status_win.geometry(f"{width}x{height}+{x}+{y}")
         self.update_status_win.protocol("WM_DELETE_WINDOW", lambda: None)
-        tk.Label(self.update_status_win, text=f"v{update['version']} 업데이트를 내려받고 있어요.",
+        tk.Label(self.update_status_win, text=f"v{update['version']} 설치 파일을 내려받고 있어요.",
                  bg=CREAM, fg=INK, font=("Malgun Gothic", 10)).pack(pady=(18, 8))
         from tkinter.ttk import Progressbar
         self.update_status_bar = Progressbar(self.update_status_win, mode="indeterminate", length=280)
@@ -1489,15 +1501,10 @@ class App:
         self.update_status_bar.start(12)
 
         def worker():
-            temp_dir = None
             try:
-                temp_dir = Path(tempfile.mkdtemp(prefix="UsagiJindo-update-"))
-                archive = temp_dir / update["asset_name"]
-                download_release_asset(update, archive)
-                self.update_events.put(("downloaded", (update, archive), False))
+                download_release_asset(update, destination)
+                self.update_events.put(("downloaded", (update, destination), False))
             except Exception as exc:
-                if temp_dir:
-                    shutil.rmtree(temp_dir, ignore_errors=True)
                 self.update_events.put(("download_error", exc, False))
 
         threading.Thread(target=worker, name="update-download", daemon=True).start()
@@ -1510,37 +1517,6 @@ class App:
         if self.update_status_win and self.update_status_win.winfo_exists():
             self.update_status_win.destroy()
         self.update_status_win = None
-
-    def launch_update_helper(self, update, archive):
-        if not self.save():
-            shutil.rmtree(archive.parent, ignore_errors=True)
-            self.update_busy = False
-            return
-        install_dir = Path(sys.executable).resolve().parent
-        helper = install_dir / UPDATER_EXECUTABLE_NAME
-        helper_copy = Path(tempfile.gettempdir()) / f"UsagiJindoUpdater-{uuid.uuid4().hex}.exe"
-        try:
-            shutil.copy2(helper, helper_copy)
-            flags = (subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP |
-                     getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            subprocess.Popen(
-                [str(helper_copy), "--pid", str(os.getpid()),
-                 "--install-dir", str(install_dir), "--archive", str(archive),
-                 "--exe-name", Path(sys.executable).name],
-                cwd=str(tempfile.gettempdir()), stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                close_fds=True, creationflags=flags)
-        except OSError as exc:
-            try:
-                helper_copy.unlink(missing_ok=True)
-            except OSError:
-                pass
-            shutil.rmtree(archive.parent, ignore_errors=True)
-            self.update_busy = False
-            messagebox.showerror("업데이트 설치", f"업데이트 도우미를 시작하지 못했어요.\n\n{exc}",
-                                 parent=self.mascots[0].win if self.mascots else self.root)
-            return
-        self.root.destroy()
 
     def resize_classes(self, count, parent=None):
         classes = self.data["classes"]

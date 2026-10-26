@@ -8,7 +8,7 @@ if not exist "%RUNTIME_ENV%\Scripts\python.exe" (
   if errorlevel 1 goto setup_failed
 )
 
-"%RUNTIME_ENV%\Scripts\python.exe" -c "import PIL; import tkinterdnd2" >nul 2>&1
+"%RUNTIME_ENV%\Scripts\python.exe" -c "import PIL" >nul 2>&1
 if errorlevel 1 (
   echo Installing runtime packages. Internet is needed the first time.
   "%RUNTIME_ENV%\Scripts\python.exe" -m pip install -r requirements-runtime.txt
