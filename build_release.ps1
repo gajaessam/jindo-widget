@@ -34,6 +34,7 @@ $AppBundle = Join-Path $DistRoot $AppName
 $UpdaterOutput = Join-Path $DistRoot "UsagiJindoUpdater.exe"
 $UpdaterInBundle = Join-Path $AppBundle "UsagiJindoUpdater.exe"
 $ArchivePath = Join-Path $ReleaseRoot "UsagiJindo-v$Version-Windows-x64.zip"
+$InstallerPath = Join-Path $ReleaseRoot "JindoWidget-Setup-v$Version.exe"
 
 New-Item -ItemType Directory -Force -Path `
     $BuildRoot, $ReleaseRoot, (Join-Path $BuildRoot "app-spec"), `
@@ -79,3 +80,27 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $Hash = (Get-FileHash -LiteralPath $ArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
 Write-Output "릴리스 준비 완료: $ArchivePath"
 Write-Output "SHA-256: $Hash"
+
+$IsccCandidates = @(
+    (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
+    (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe"),
+    (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 7\ISCC.exe"),
+    (Join-Path $env:ProgramFiles "Inno Setup 7\ISCC.exe")
+)
+$IsccPath = $IsccCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $IsccPath) {
+    $IsccCommand = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+    if ($IsccCommand) { $IsccPath = $IsccCommand.Source }
+}
+if (-not $IsccPath) {
+    throw "Inno Setup Compiler(ISCC.exe)를 찾지 못했어요. GitHub Actions의 windows-latest에서 다시 실행해 주세요."
+}
+
+& $IsccPath "/DAppVersion=$Version" "/DAppBundle=$AppBundle" "installer.iss"
+if ($LASTEXITCODE -ne 0) { throw "설치 파일 빌드에 실패했어요." }
+if (-not (Test-Path -LiteralPath $InstallerPath)) {
+    throw "빌드된 설치 파일을 찾지 못했어요."
+}
+$InstallerHash = (Get-FileHash -LiteralPath $InstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+Write-Output "설치 파일 준비 완료: $InstallerPath"
+Write-Output "SHA-256: $InstallerHash"

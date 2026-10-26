@@ -25,20 +25,22 @@ Windows 바탕화면 아래쪽, 작업표시줄 바로 위에 반별 캐릭터�
 
 이 앱은 `gajaessam/jindo-widget`의 공개 릴리스를 확인합니다. GitHub Releases API는 공개 저장소에서 인증 없이 사용합니다. GitHub에 릴리스 파일을 올리면 앱은 업데이트 확인 요청을 보내며, 업데이트 다운로드는 앱에서 설치를 선택했을 때 시작됩니다.
 
-### 릴리스 ZIP 만들기
+### 설치 파일과 자동 업데이트 ZIP 만들기
 
-Windows에서 Python 3와 Tcl/Tk를 설치한 뒤 프로젝트 폴더에서 아래를 실행합니다.
+GitHub Actions를 사용하면 내 컴퓨터에 빌드 도구를 설치할 필요가 없습니다. 직접 빌드하려면 Python 3, Tcl/Tk, Pillow, PyInstaller와 Inno Setup 6 이상이 설치된 Windows에서 프로젝트 폴더의 아래 명령을 실행합니다.
 
 ```powershell
 python -m pip install -r requirements-build.txt
 .\build_release.ps1
 ```
 
-빌드 결과는 `release\UsagiJindo-v0.2.1-Windows-x64.zip`처럼 `release` 폴더에 생깁니다. ZIP 안에는 영문 이름 `JindoWidget` 폴더가 포함되고 그 안에 앱 실행 파일, PyInstaller 파일, `UsagiJindoUpdater.exe`가 들어갑니다. ZIP을 원하는 위치에 풀되 폴더 이름은 `JindoWidget`으로 유지해 주세요. 앱은 이 폴더만 교체하므로 바탕 화면이나 문서 폴더에 ZIP 내용을 직접 풀지 마세요. 이 ZIP을 GitHub 저장소의 Releases에 해당 버전 태그로 첨부합니다. 새 저장소의 첫 기준 릴리스는 `v0.2.1`입니다. 다음 릴리스를 만들 때 `update_config.py`의 `APP_VERSION`을 예를 들어 `0.2.2`로 올리고 다시 빌드한 다음, GitHub Release 태그를 `v0.2.2`로 만들어 해당 ZIP을 첨부합니다. 파일 이름은 코드가 찾는 이름과 정확히 일치해야 합니다.
+빌드가 성공하면 `release` 폴더에 설치 파일 `JindoWidget-Setup-v0.2.1.exe`와 앱 자동 업데이트용 `UsagiJindo-v0.2.1-Windows-x64.zip`이 만들어집니다. 받는 사람은 설치 파일을 내려받아 실행하면 됩니다. 설치 프로그램이 필요한 구성품을 사용자 폴더에 설치하고 시작 메뉴 바로가기를 만듭니다. 바탕 화면 바로가기는 설치 중 선택할 수 있습니다.
 
-새 저장소와 영문 앱 폴더 이름을 처음 적용할 때는 기존 설치본의 자동 업데이트가 새 저장소로 이어지지 않습니다. 새 저장소의 첫 Release ZIP을 직접 내려받아 `JindoWidget` 폴더에 설치해 주세요. 진도와 반 설정은 `%APPDATA%\UsagiJindo`에 저장되므로 그대로 유지됩니다. 전환한 뒤의 업데이트는 새 저장소에서 자동으로 확인합니다.
+GitHub Release에는 두 파일을 모두 첨부해야 합니다. 설치 파일은 새 사용자가 내려받아 설치할 파일이고, ZIP은 앱의 자동 업데이트 기능이 사용하는 파일입니다. ZIP은 일반 사용자가 따로 내려받아 풀 필요가 없습니다. 새 저장소의 첫 Release 태그는 `v0.2.1`입니다. 다음 배포 때 `update_config.py`의 `APP_VERSION`을 예를 들어 `0.2.2`로 올린 뒤 빌드하고, GitHub Release 태그를 `v0.2.2`로 지정해 해당 버전의 설치 파일과 ZIP을 함께 첨부합니다. 앱이 업데이트 ZIP을 찾으므로 파일 이름을 그대로 유지해 주세요.
 
-빌드 스크립트는 Windows용 앱 폴더와 별도 업데이트 도우미를 만든 뒤 앱 폴더의 내용물을 ZIP으로 묶습니다. 릴리스를 게시하는 작업은 GitHub에서 직접 해야 합니다. 앱 실행 파일에는 코드 서명이 포함되지 않으므로 Windows가 최초 실행 시 게시자 확인 안내를 표시할 수 있습니다.
+새 저장소와 영문 앱 폴더 이름을 처음 적용할 때는 기존 설치본의 자동 업데이트가 새 저장소로 이어지지 않습니다. 새 저장소의 첫 `JindoWidget-Setup-v0.2.1.exe`를 직접 실행해 설치해 주세요. 진도와 반 설정은 `%APPDATA%\UsagiJindo`에 저장되므로 그대로 유지됩니다. 전환한 뒤의 업데이트는 새 저장소에서 자동으로 확인합니다.
+
+빌드 스크립트는 Windows용 앱 폴더와 별도 업데이트 도우미를 만든 뒤, Inno Setup 설치 파일과 앱 자동 업데이트용 ZIP을 생성합니다. Actions 아티팩트에는 두 배포 파일이 모두 들어 있습니다. GitHub Release를 게시할 때는 두 파일을 모두 첨부해야 하며, 사용자는 설치 파일만 받으면 됩니다. 앱 실행 파일과 설치 파일에는 코드 서명이 포함되지 않으므로 Windows가 최초 실행 시 게시자 확인 안내를 표시할 수 있습니다.
 
 ## 실행
 
