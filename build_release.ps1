@@ -34,7 +34,7 @@ $AppBundle = Join-Path $DistRoot $AppName
 $UpdaterOutput = Join-Path $DistRoot "UsagiJindoUpdater.exe"
 $UpdaterInBundle = Join-Path $AppBundle "UsagiJindoUpdater.exe"
 $ArchivePath = Join-Path $ReleaseRoot "UsagiJindo-v$Version-Windows-x64.zip"
-$InstallerPath = Join-Path $ReleaseRoot "JindoWidget-Setup-v$Version.exe"
+$InstallerPath = Join-Path $ReleaseRoot "진도 위젯-v$Version.exe"
 
 New-Item -ItemType Directory -Force -Path `
     $BuildRoot, $ReleaseRoot, (Join-Path $BuildRoot "app-spec"), `
