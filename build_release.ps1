@@ -26,7 +26,7 @@ $DistRoot = Join-Path $PSScriptRoot "dist"
 $BuildRoot = Join-Path $PSScriptRoot "build"
 $ReleaseRoot = Join-Path $PSScriptRoot "release"
 $AppBundle = Join-Path $DistRoot $AppName
-$InstallerPath = Join-Path $ReleaseRoot "진도 위젯-v$Version.exe"
+$InstallerPath = Join-Path $ReleaseRoot "JindoWidget-Setup-v$Version.exe"
 
 New-Item -ItemType Directory -Force -Path `
     $BuildRoot, $ReleaseRoot, (Join-Path $BuildRoot "app-spec") | Out-Null

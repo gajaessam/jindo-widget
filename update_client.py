@@ -68,10 +68,16 @@ def check_for_update():
         return None
 
     asset_name = RELEASE_ASSET_TEMPLATE.format(version=".".join(map(str, latest_version)))
-    asset = next((item for item in release.get("assets", [])
-                  if item.get("name") == asset_name), None)
+    assets = release.get("assets", [])
+    asset = next((item for item in assets if item.get("name") == asset_name), None)
+    if not asset:
+        executable_assets = [item for item in assets
+                             if str(item.get("name", "")).lower().endswith(".exe")]
+        if len(executable_assets) == 1:
+            asset = executable_assets[0]
     if not asset:
         raise UpdateError(f"최신 릴리스에 배포 파일 {asset_name}이 없어요.")
+    asset_name = str(asset.get("name") or asset_name)
     download_url = asset.get("browser_download_url", "")
     parsed_url = urllib.parse.urlparse(download_url)
     if parsed_url.scheme != "https" or parsed_url.hostname != "github.com":
