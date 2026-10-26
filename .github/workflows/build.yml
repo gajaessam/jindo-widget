@@ -1,0 +1,35 @@
+name: Build Windows app
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Get source files
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: python -m pip install -r requirements-build.txt
+
+      - name: Build app and ZIP
+        shell: pwsh
+        run: .\build_release.ps1
+
+      - name: Save ZIP for download
+        uses: actions/upload-artifact@v4
+        with:
+          name: JindoWidget-Windows
+          path: release/*.zip
+          if-no-files-found: error
