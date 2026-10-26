@@ -1488,12 +1488,7 @@ class App:
             notes = payload.get("notes", "")
             if len(notes) > 1200:
                 notes = notes[:1200].rstrip() + "…"
-            prompt = (f"새 버전 v{payload['version']}을 받을 수 있어요.\n"
-                      f"현재 버전: v{APP_VERSION}\n\n"
-                      f"{notes or '릴리스 설명이 없습니다.'}\n\n"
-                      "설치 파일을 다운로드할까요?\n"
-                      "GitHub 페이지는 열리지 않으며 자동으로 설치되지는 않아요.")
-            if messagebox.askyesno("새 업데이트", prompt, parent=parent):
+            if self.confirm_update_download(payload, notes):
                 self.start_update_download(payload)
             return
         if event == "downloaded":
@@ -1519,6 +1514,77 @@ class App:
             self.finish_update_status()
             self.update_busy = False
             messagebox.showerror("업데이트 다운로드", str(payload), parent=parent)
+
+    def confirm_update_download(self, update, notes):
+        result = {"download": False}
+        dialog = tk.Toplevel(self.root)
+        dialog.title("새 업데이트")
+        dialog.configure(bg=CREAM)
+        dialog.resizable(False, False)
+        dialog.wm_attributes("-topmost", False)
+        width = max(1, min(440, self.width - 24))
+        height = max(1, min(340, self.height - 48))
+        x = max(0, (self.width - width) // 2)
+        y = max(0, (self.height - height) // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+
+        header = tk.Frame(dialog, bg=CREAM, padx=16, pady=12)
+        header.pack(fill="x")
+        tk.Label(header, text=f"새 버전 v{update['version']}을 받을 수 있어요.",
+                 bg=CREAM, fg=INK, font=("Malgun Gothic", 11, "bold")).pack(anchor="w")
+        tk.Label(header, text=f"현재 버전: v{APP_VERSION}", bg=CREAM, fg="#82736b",
+                 font=("Malgun Gothic", 9)).pack(anchor="w", pady=(2, 0))
+
+        notes_frame = tk.Frame(dialog, bg="white", highlightthickness=1,
+                               highlightbackground="#eadfd4")
+        notes_frame.pack(fill="both", expand=True, padx=16, pady=(0, 10))
+        notes_scroll = tk.Scrollbar(notes_frame, orient="vertical")
+        notes_text = tk.Text(notes_frame, height=6, wrap="word", relief="flat", bd=0,
+                             padx=9, pady=7, bg="white", fg=INK,
+                             font=("Malgun Gothic", 9), yscrollcommand=notes_scroll.set)
+        notes_scroll.configure(command=notes_text.yview)
+        notes_scroll.pack(side="right", fill="y")
+        notes_text.pack(side="left", fill="both", expand=True)
+        notes_text.insert("1.0", notes or "릴리스 설명이 없습니다.")
+        notes_text.configure(state="disabled")
+
+        notice = tk.Frame(dialog, bg=CREAM, padx=16)
+        notice.pack(fill="x")
+        tk.Label(notice, text="설치 파일을 다운로드할까요?", bg=CREAM, fg=INK,
+                 font=("Malgun Gothic", 9)).pack(anchor="w")
+        emphasis = tk.Frame(notice, bg=CREAM)
+        emphasis.pack(anchor="w", pady=(2, 0))
+        tk.Label(emphasis, text="다운로드 후 ", bg=CREAM, fg=INK,
+                 font=("Malgun Gothic", 9)).pack(side="left")
+        tk.Label(emphasis, text="설치 파일을 실행", bg=CREAM, fg=INK,
+                 font=("Malgun Gothic", 9, "bold")).pack(side="left")
+        tk.Label(emphasis, text="해야 업데이트가 완료됩니다.", bg=CREAM, fg=INK,
+                 font=("Malgun Gothic", 9)).pack(side="left")
+        tk.Label(notice, text="진도와 반 설정은 그대로 유지됩니다.", bg=CREAM, fg="#82736b",
+                 font=("Malgun Gothic", 9)).pack(anchor="w", pady=(2, 0))
+
+        def finish(download):
+            result["download"] = download
+            try:
+                dialog.grab_release()
+            except tk.TclError:
+                pass
+            dialog.destroy()
+
+        footer = tk.Frame(dialog, bg=CREAM, padx=14, pady=12)
+        footer.pack(fill="x")
+        tk.Button(footer, text="취소", command=lambda: finish(False), bg="white", fg=INK,
+                  relief="flat", padx=12).pack(side="right")
+        tk.Button(footer, text="다운로드", command=lambda: finish(True), bg=PURPLE, fg="white",
+                  relief="flat", padx=14).pack(side="right", padx=6)
+        dialog.protocol("WM_DELETE_WINDOW", lambda: finish(False))
+        dialog.bind("<Escape>", lambda _event: finish(False))
+        dialog.bind("<Return>", lambda _event: finish(True))
+        dialog.grab_set()
+        dialog.lift()
+        dialog.focus_force()
+        dialog.wait_window()
+        return result["download"]
 
     def start_update_download(self, update):
         if not getattr(sys, "frozen", False):
