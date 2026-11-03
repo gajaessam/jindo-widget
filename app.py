@@ -459,6 +459,7 @@ class Mascot:
             state="normal" if self.app.auto_start_supported() else "disabled",
             command=lambda var=auto_start_var: self.app.toggle_auto_start(bool(var.get())))
         menu.add_command(label="업데이트 확인", command=self.app.check_for_updates)
+        menu.add_command(label="프로그램 정보", command=self.app.show_program_info)
         menu.add_command(label="전체 종료", command=self.app.close)
         menu.tk_popup(event.x_root, event.y_root)
 
@@ -1434,6 +1435,13 @@ class App:
             self.plan_settings.win.focus_force()
             return
         self.plan_settings = PlanSettings(self)
+
+    def show_program_info(self):
+        parent = self.mascots[0].win if self.mascots else self.root
+        messagebox.showinfo(
+            "프로그램 정보",
+            f"진도 위젯\n버전 v{APP_VERSION}\n\n제작: 가정재연쌤 (@gajae_ssam)",
+            parent=parent)
 
     def check_for_updates(self, manual=True):
         """Check GitHub off the UI thread; download the installer on request."""
