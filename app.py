@@ -21,6 +21,9 @@ BASE = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("APPDATA", str(BASE))) / "UsagiJindo"
 DATA_FILE = DATA_DIR / "progress.json"
 BACKUP_FILE = DATA_DIR / "progress.json.bak"
+DAILY_BACKUP_DIR = DATA_DIR / "backups"
+DAILY_BACKUPS_KEPT = 14
+MEMO_SAVE_DELAY_MS = 500
 CHARACTER_DIR = DATA_DIR / "characters"
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_IMAGE_PIXELS = 24_000_000
@@ -35,6 +38,8 @@ LOAD_RECOVERY_FILE = None
 USE_CLASS_IMAGE = object()
 AUTO_START_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 AUTO_START_VALUE = "JindoWidget"
+# installer.iss uses the same name in AppMutex; "Local\" keeps it per Windows session.
+SINGLE_INSTANCE_MUTEX = r"Local\JindoWidget-SingleInstance"
 
 
 def configure_dpi_awareness():
@@ -52,6 +57,27 @@ def configure_dpi_awareness():
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except (AttributeError, OSError):
         pass
+
+def acquire_single_instance():
+    """Hold a named mutex for this process; return None if another widget owns it."""
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+        kernel32.CreateMutexW.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        handle = kernel32.CreateMutexW(None, False, SINGLE_INSTANCE_MUTEX)
+        if handle and ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+            kernel32.CloseHandle(handle)
+            return None
+        # If the mutex cannot be created at all, start anyway rather than lock users out.
+        return handle or True
+    except (AttributeError, OSError):
+        return True
+
 
 def empty_image_placeholder():
     """Draw a quiet add-image placeholder without bundled character artwork."""
@@ -266,6 +292,57 @@ def load_data():
     return fresh_data()
 
 
+def save_daily_backup():
+    """Keep the state from before the day's first save, for recovering from mistakes."""
+    today = DAILY_BACKUP_DIR / f"progress-{time.strftime('%Y-%m-%d')}.json"
+    if today.exists():
+        return
+    try:
+        DAILY_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        temp = today.with_name(f"{today.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            shutil.copy2(DATA_FILE, temp)
+            os.replace(temp, today)
+        finally:
+            if temp.exists():
+                temp.unlink()
+        for old in sorted(DAILY_BACKUP_DIR.glob("progress-????-??-??.json"))[:-DAILY_BACKUPS_KEPT]:
+            old.unlink()
+    except OSError:
+        # A missed daily copy must never stop the real save.
+        pass
+
+
+def list_backups():
+    """Return readable backups, newest saved state first, skipping damaged files."""
+    entries = []
+    for pattern, kind in (("progress-*.json", ""), ("before-restore-*.json", "  (복원 직전)")):
+        for path in DAILY_BACKUP_DIR.glob(pattern):
+            try:
+                data = normalize_data(json.loads(path.read_text(encoding="utf-8")))
+                saved_at = path.stat().st_mtime
+            except (OSError, ValueError, TypeError, KeyError, AttributeError, IndexError):
+                continue
+            activities = sum(len(lesson["items"]) for lesson in data["plan"])
+            checks = sum(sum(marks) for cls in data["classes"] for marks in cls["progress"])
+            saved_text = time.strftime("%Y-%m-%d %H:%M", time.localtime(saved_at))
+            entries.append({
+                "data": data, "saved_at": saved_at, "saved_text": saved_text,
+                "label": f"{saved_text}   {len(data['classes'])}개 반 · 활동 {activities}개 · "
+                         f"체크 {checks}개{kind}"})
+    entries.sort(key=lambda entry: entry["saved_at"], reverse=True)
+    return entries
+
+
+def preserve_before_restore():
+    """Copy the current save so that a restore can itself be undone."""
+    DAILY_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    keep = DAILY_BACKUP_DIR / f"before-restore-{time.strftime('%Y%m%d-%H%M%S')}.json"
+    shutil.copy2(DATA_FILE, keep)
+    for old in sorted(DAILY_BACKUP_DIR.glob("before-restore-*.json"))[:-DAILY_BACKUPS_KEPT]:
+        old.unlink()
+
+
 def atomic_save_data(data):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     if LOAD_SAVE_BLOCKED:
@@ -287,6 +364,7 @@ def atomic_save_data(data):
             finally:
                 if backup_tmp.exists():
                     backup_tmp.unlink()
+            save_daily_backup()
     temp = DATA_FILE.with_name(f"{DATA_FILE.name}.{uuid.uuid4().hex}.tmp")
     try:
         with temp.open("w", encoding="utf-8", newline="\n") as stream:
@@ -381,7 +459,13 @@ class Mascot:
         return (self.progress_x(), self.anchor_y)
 
     def place(self):
-        self.win.geometry(f"+{int(self.x)}+{int(self.y)}")
+        # Moving a window is costly on Windows; skip the call when the pixel
+        # position has not changed, which is most animation ticks at rest.
+        position = (int(self.x), int(self.y))
+        if position == getattr(self, "placed_at", None):
+            return
+        self.placed_at = position
+        self.win.geometry(f"+{position[0]}+{position[1]}")
 
     def animate(self):
         if not self.win.winfo_exists():
@@ -458,6 +542,7 @@ class Mascot:
             label="자동 실행", variable=auto_start_var,
             state="normal" if self.app.auto_start_supported() else "disabled",
             command=lambda var=auto_start_var: self.app.toggle_auto_start(bool(var.get())))
+        menu.add_command(label="백업에서 복원", command=self.app.open_restore_dialog)
         menu.add_command(label="업데이트 확인", command=self.app.check_for_updates)
         menu.add_command(label="프로그램 정보", command=self.app.show_program_info)
         menu.add_command(label="전체 종료", command=self.app.close)
@@ -729,7 +814,12 @@ class PlanSettings:
     def __init__(self, app):
         self.app = app
         self.plan = copy.deepcopy(app.data["plan"])
-        self.progress = [copy.deepcopy(cls["progress"]) for cls in app.data["classes"]]
+        self.opened_plan = copy.deepcopy(app.data["plan"])
+        # Track where each row came from instead of copying the marks, so
+        # boxes checked in the progress window while this dialog is open survive.
+        self.opened_items = [list(lesson["items"]) for lesson in app.data["plan"]]
+        self.origins = [[(lesson_idx, item_idx) for item_idx in range(len(lesson["items"]))]
+                        for lesson_idx, lesson in enumerate(self.plan)]
         self.lesson_selection = copy.deepcopy(app.data.get("lesson", {}))
         self.win = tk.Toplevel(app.root)
         self.win.title("수업 계획 설정")
@@ -853,8 +943,7 @@ class PlanSettings:
                                       initialvalue=f"{len(self.plan) + 1}차시", parent=self.win)
         if name and name.strip():
             self.plan.append({"name": name.strip(), "items": []})
-            for marks in self.progress:
-                marks.append([])
+            self.origins.append([])
             self.render()
 
     def edit_lesson(self, lesson_idx):
@@ -874,8 +963,7 @@ class PlanSettings:
         if not 0 <= target < len(self.plan):
             return
         self.plan[lesson_idx], self.plan[target] = self.plan[target], self.plan[lesson_idx]
-        for marks in self.progress:
-            marks[lesson_idx], marks[target] = marks[target], marks[lesson_idx]
+        self.origins[lesson_idx], self.origins[target] = self.origins[target], self.origins[lesson_idx]
         for key, selected_idx in list(self.lesson_selection.items()):
             if selected_idx == lesson_idx:
                 self.lesson_selection[key] = target
@@ -893,9 +981,7 @@ class PlanSettings:
                 parent=self.win):
             return
         self.plan.pop(lesson_idx)
-        for marks in self.progress:
-            if lesson_idx < len(marks):
-                marks.pop(lesson_idx)
+        self.origins.pop(lesson_idx)
         for key, old_index in list(self.lesson_selection.items()):
             if old_index > lesson_idx:
                 self.lesson_selection[key] = old_index - 1
@@ -907,8 +993,7 @@ class PlanSettings:
         text = simpledialog.askstring("활동 추가", "활동 내용을 입력해 주세요.", parent=self.win)
         if text and text.strip():
             self.plan[lesson_idx]["items"].append({"text": text.strip()})
-            for marks in self.progress:
-                marks[lesson_idx].append(False)
+            self.origins[lesson_idx].append(None)
             self.render()
 
     def edit_item(self, lesson_idx, item_idx):
@@ -929,9 +1014,8 @@ class PlanSettings:
         if not 0 <= target < len(items):
             return
         items[item_idx], items[target] = items[target], items[item_idx]
-        for marks in self.progress:
-            lesson_marks = marks[lesson_idx]
-            lesson_marks[item_idx], lesson_marks[target] = lesson_marks[target], lesson_marks[item_idx]
+        origins = self.origins[lesson_idx]
+        origins[item_idx], origins[target] = origins[target], origins[item_idx]
         self.render()
 
     def delete_item(self, lesson_idx, item_idx):
@@ -942,23 +1026,48 @@ class PlanSettings:
                 parent=self.win):
             return
         self.plan[lesson_idx]["items"].pop(item_idx)
-        for marks in self.progress:
-            if lesson_idx < len(marks) and item_idx < len(marks[lesson_idx]):
-                marks[lesson_idx].pop(item_idx)
+        self.origins[lesson_idx].pop(item_idx)
         self.render()
 
+    def live_position(self, live_plan):
+        """Map a row's origin to where that activity sits in the saved plan now."""
+        if live_plan == self.opened_plan:
+            return lambda origin: origin
+        # The progress window edited the plan meanwhile; follow the same item objects.
+        current = {id(item): (lesson_idx, item_idx)
+                   for lesson_idx, lesson in enumerate(live_plan)
+                   for item_idx, item in enumerate(lesson["items"])}
+        return lambda origin: (None if origin is None else
+                               current.get(id(self.opened_items[origin[0]][origin[1]])))
+
+    def merged_progress(self, marks, position):
+        merged = []
+        for lesson_origins in self.origins:
+            row = []
+            for origin in lesson_origins:
+                pos = position(origin)
+                row.append(bool(marks[pos[0]][pos[1]]) if pos else False)
+            merged.append(row)
+        return merged
+
     def save(self):
+        live_plan = self.app.data["plan"]
+        if live_plan != self.opened_plan and not messagebox.askyesno(
+                "수업 계획 저장",
+                "이 창을 연 뒤 진도창에서 차시나 활동이 바뀌었어요.\n이 창의 계획으로 덮어쓸까요?",
+                parent=self.win):
+            return
+        position = self.live_position(live_plan)
+        new_progress = [self.merged_progress(cls["progress"], position)
+                        for cls in self.app.data["classes"]]
         previous_plan = self.app.data["plan"]
         previous_lesson = self.app.data.get("lesson", {})
         previous_progress = [cls["progress"] for cls in self.app.data["classes"]]
         self.app.set_undo()
         self.app.data["plan"] = copy.deepcopy(self.plan)
         self.app.data["lesson"] = copy.deepcopy(self.lesson_selection)
-        for idx, cls in enumerate(self.app.data["classes"]):
-            if idx < len(self.progress):
-                cls["progress"] = copy.deepcopy(self.progress[idx])
-            else:
-                cls["progress"] = [[False] * len(lesson["items"]) for lesson in self.plan]
+        for cls, marks in zip(self.app.data["classes"], new_progress):
+            cls["progress"] = marks
         self.app.refresh_track()
         if not self.app.save():
             self.app.data["plan"] = previous_plan
@@ -1244,7 +1353,7 @@ class ProgressBubble:
             self.app.clear_undo()
             self.cls["memo"] = self.memo_text.get("1.0", "end-1c")
             self.memo_text.edit_modified(False)
-            self.app.save()
+            self.app.schedule_save()
 
     def capture_memo(self):
         if getattr(self, "memo_text", None) and self.memo_text.winfo_exists():
@@ -1328,6 +1437,74 @@ class ProgressBubble:
         self.app.bubble = None
         self.win.destroy()
 
+class RestoreDialog:
+    def __init__(self, app, entries):
+        self.app, self.entries = app, entries
+        self.win = tk.Toplevel(app.root)
+        self.win.title("백업에서 복원")
+        self.win.configure(bg=CREAM)
+        self.win.resizable(False, False)
+        self.win.wm_attributes("-topmost", True)
+
+        header = tk.Frame(self.win, bg=CREAM, padx=14, pady=10)
+        header.pack(fill="x")
+        tk.Label(header, text="되돌릴 시점을 골라 주세요.", bg=CREAM, fg=INK,
+                 font=("Malgun Gothic", 11, "bold")).pack(anchor="w")
+        tk.Label(header, text="진도 체크, 메모, 수업 계획과 반 설정이 그 시점으로 바뀌어요.",
+                 bg=CREAM, fg="#82736b", font=("Malgun Gothic", 8)).pack(anchor="w", pady=(2, 0))
+
+        body = tk.Frame(self.win, bg="white", highlightthickness=1, highlightbackground="#eadfd4")
+        body.pack(fill="both", expand=True, padx=14)
+        scrollbar = tk.Scrollbar(body, orient="vertical")
+        self.listbox = tk.Listbox(body, height=min(len(entries), 10), width=58, bg="white", fg=INK,
+                                  relief="flat", bd=0, highlightthickness=0, activestyle="none",
+                                  selectbackground=PURPLE, selectforeground="white",
+                                  font=("Malgun Gothic", 9), exportselection=False,
+                                  yscrollcommand=scrollbar.set)
+        scrollbar.configure(command=self.listbox.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.listbox.pack(side="left", fill="both", expand=True, padx=4, pady=4)
+        for entry in entries:
+            self.listbox.insert("end", entry["label"])
+        self.listbox.selection_set(0)
+
+        footer = tk.Frame(self.win, bg=CREAM, padx=14, pady=10)
+        footer.pack(fill="x")
+        tk.Button(footer, text="닫기", command=self.close, bg="white", fg=INK,
+                  relief="flat", padx=10).pack(side="right")
+        self.restore_button = tk.Button(footer, text="복원", command=self.restore, bg=PURPLE,
+                                        fg="white", relief="flat", padx=12)
+        self.restore_button.pack(side="right", padx=6)
+
+        self.win.update_idletasks()
+        x = max(0, (app.width - self.win.winfo_reqwidth()) // 2)
+        y = max(0, (app.height - self.win.winfo_reqheight()) // 2)
+        self.win.geometry(f"+{x}+{y}")
+        self.win.bind("<Escape>", lambda _e: self.close())
+        self.win.protocol("WM_DELETE_WINDOW", self.close)
+
+    def restore(self):
+        selection = self.listbox.curselection()
+        if not selection:
+            return
+        entry = self.entries[selection[0]]
+        if not messagebox.askyesno(
+                "백업에서 복원",
+                f"{entry['saved_text']} 상태로 되돌릴까요?\n\n"
+                "지금 상태는 따로 보관되므로 이 목록에서 다시 되돌릴 수 있어요.",
+                parent=self.win):
+            return
+        if self.app.restore_backup(entry, parent=self.win):
+            self.close()
+            messagebox.showinfo("백업에서 복원", f"{entry['saved_text']} 상태로 복원했어요.",
+                                parent=self.app.mascots[0].win)
+
+    def close(self):
+        self.app.restore_dialog = None
+        if self.win.winfo_exists():
+            self.win.destroy()
+
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -1340,6 +1517,7 @@ class App:
         self.image_issues = []
         self.save_error_shown = False
         self.save_status = "저장됨"
+        self.pending_save = None
         self.undo_snapshot = None
         self.update_events = queue.Queue()
         self.update_busy = False
@@ -1353,11 +1531,15 @@ class App:
         self.mascots = []
         self.bubble = None
         self.plan_settings = None
+        self.class_settings = None
+        self.restore_dialog = None
         for idx, cls in enumerate(self.data["classes"]):
             mascot = Mascot(self, idx, cls)
             self.mascots.append(mascot)
         for mascot in self.mascots:
             mascot.animate()
+        # Shift turns the keysym into "Q"; the lowercase form covers Caps Lock.
+        root.bind_all("<Control-Shift-Q>", lambda _e: self.close())
         root.bind_all("<Control-Shift-q>", lambda _e: self.close())
         if not LOAD_SAVE_BLOCKED:
             self.save()
@@ -1379,7 +1561,57 @@ class App:
         self.refresh_track()
 
     def open_class_settings(self):
-        ClassSettings(self)
+        if self.class_settings and self.class_settings.win.winfo_exists():
+            self.class_settings.win.lift()
+            self.class_settings.win.focus_force()
+            return
+        self.class_settings = ClassSettings(self)
+
+    def open_restore_dialog(self):
+        if self.restore_dialog and self.restore_dialog.win.winfo_exists():
+            self.restore_dialog.win.lift()
+            self.restore_dialog.win.focus_force()
+            return
+        entries = list_backups()
+        if not entries:
+            messagebox.showinfo("백업에서 복원", "아직 복원할 수 있는 백업이 없어요.\n"
+                                "백업은 하루에 한 번 자동으로 만들어져요.",
+                                parent=self.mascots[0].win if self.mascots else self.root)
+            return
+        self.restore_dialog = RestoreDialog(self, entries)
+
+    def restore_backup(self, entry, parent=None):
+        """Replace all data with a backup, keeping the current state restorable."""
+        if not self.save():
+            return False
+        try:
+            preserve_before_restore()
+        except OSError as exc:
+            messagebox.showerror(
+                "백업에서 복원",
+                f"지금 상태를 보관하지 못해 복원을 취소했어요.\n"
+                f"저장 위치의 권한과 여유 공간을 확인해 주세요.\n\n{exc}",
+                parent=parent or self.root)
+            return False
+        # Open windows hold references to the data being replaced.
+        if self.bubble and self.bubble.win.winfo_exists():
+            self.bubble.close()
+        if self.plan_settings and self.plan_settings.win.winfo_exists():
+            self.plan_settings.close_window()
+        if self.class_settings and self.class_settings.win.winfo_exists():
+            self.class_settings.cancel()
+        self.clear_undo()
+        for mascot in self.mascots:
+            mascot.win.destroy()
+        del self.mascots[:]
+        self.data.clear()
+        self.data.update(copy.deepcopy(entry["data"]))
+        for idx, cls in enumerate(self.data["classes"]):
+            self.mascots.append(Mascot(self, idx, cls))
+        for mascot in self.mascots:
+            mascot.animate()
+        self.refresh_track()
+        return self.save()
 
     def auto_start_supported(self):
         return os.name == "nt" and bool(getattr(sys, "frozen", False))
@@ -1773,7 +2005,19 @@ class App:
             self.bubble.refresh()
         self.save()
 
+    def schedule_save(self):
+        """Save once typing pauses; any earlier save also writes these changes."""
+        if self.pending_save:
+            self.root.after_cancel(self.pending_save)
+        self.pending_save = self.root.after(MEMO_SAVE_DELAY_MS, self.save)
+        self.save_status = "저장 중…"
+        if self.bubble and self.bubble.win.winfo_exists() and getattr(self.bubble, "save_status_label", None):
+            self.bubble.save_status_label.configure(text=self.save_status, fg="#82736b")
+
     def save(self):
+        if self.pending_save:
+            self.root.after_cancel(self.pending_save)
+            self.pending_save = None
         try:
             atomic_save_data(self.data)
             self.save_error_shown = False
@@ -1840,6 +2084,18 @@ class App:
         self.root.destroy()
 
 if __name__ == "__main__":
+    # Two copies would each keep their own data in memory and overwrite each
+    # other's saves, so a second launch only tells the user and exits.
+    instance_lock = acquire_single_instance()
+    if instance_lock is None:
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                None, "진도 위젯이 이미 실행 중이에요.\n바탕 화면 아래쪽의 캐릭터를 확인해 주세요.",
+                "우리 반 캐릭터 진도 위젯", 0x40)
+        except (AttributeError, OSError):
+            pass
+        raise SystemExit(0)
     configure_dpi_awareness()
     try:
         root = tk.Tk()

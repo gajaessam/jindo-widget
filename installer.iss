@@ -25,6 +25,8 @@ ArchitecturesInstallIn64BitMode=x64
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 UsePreviousAppDir=no
+; Must match SINGLE_INSTANCE_MUTEX in app.py (without the "Local\" prefix).
+AppMutex=JindoWidget-SingleInstance
 CloseApplications=yes
 RestartApplications=no
 
