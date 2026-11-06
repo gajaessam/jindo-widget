@@ -38,6 +38,7 @@ Name: "desktopicon"; Description: "바탕 화면에 바로 가기 만들기"; Gr
 
 [Files]
 Source: "{#AppBundle}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "JindoWidget-Guide.pdf"; DestDir: "{app}"; Flags: ignoreversion
 
 [InstallDelete]
 Type: files; Name: "{app}\UsagiJindoUpdater.exe"
@@ -45,10 +46,12 @@ Type: filesandordirs; Name: "{app}\_internal\tkinterdnd2"
 
 [Icons]
 Name: "{autoprograms}\진도 위젯"; Filename: "{app}\JindoWidget.exe"; WorkingDir: "{app}"
+Name: "{autoprograms}\진도 위젯 사용 설명서"; Filename: "{app}\JindoWidget-Guide.pdf"
 Name: "{autodesktop}\진도 위젯"; Filename: "{app}\JindoWidget.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\JindoWidget.exe"; Description: "진도 위젯 실행"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\JindoWidget-Guide.pdf"; Description: "사용 설명서 열기"; Flags: shellexec nowait postinstall skipifsilent unchecked
 
 [Code]
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

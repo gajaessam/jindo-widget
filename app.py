@@ -18,7 +18,9 @@ from update_client import check_for_update, download_release_asset, repository_i
 from update_config import APP_VERSION
 
 BASE = Path(__file__).parent
-DATA_DIR = Path(os.environ.get("APPDATA", str(BASE))) / "UsagiJindo"
+# The installer places the guide beside the executable, not inside the bundle.
+MANUAL_FILE = (Path(sys.executable).parent if getattr(sys, "frozen", False) else BASE) / "JindoWidget-Guide.pdf"
+DATA_DIR =Path(os.environ.get("APPDATA", str(BASE))) / "UsagiJindo"
 DATA_FILE = DATA_DIR / "progress.json"
 BACKUP_FILE = DATA_DIR / "progress.json.bak"
 DAILY_BACKUP_DIR = DATA_DIR / "backups"
@@ -156,11 +158,13 @@ def taskbar_top(screen_height):
 
 def fresh_data():
     plan = [{"name": "1차시", "items": [
-        {"text": "공기환경"}, {"text": "소리환경"}, {"text": "빛환경"}, {"text": "포스터 그리기"}
+        {"text": "여기에 활동을 적어 주세요"},
+        {"text": "⋯ 버튼으로 수정해 보세요"},
+        {"text": "다 끝나면 체크해 보세요"}
     ]}]
-    classes = [{"name": f"{n}반", "image": n - 5, "custom_image": None,
+    classes = [{"name": f"{n}반", "image": n - 1, "custom_image": None,
                 "progress": [[False] * len(plan[0]["items"])], "memo": ""}
-               for n in range(5, 11)]
+               for n in range(1, 7)]
     return {"classes": classes, "plan": plan, "lesson": {}, "float_motion": False,
             "character_scale": 100, "show_progress_labels": True}
 
@@ -544,6 +548,7 @@ class Mascot:
             command=lambda var=auto_start_var: self.app.toggle_auto_start(bool(var.get())))
         menu.add_command(label="백업에서 복원", command=self.app.open_restore_dialog)
         menu.add_command(label="업데이트 확인", command=self.app.check_for_updates)
+        menu.add_command(label="사용 설명서", command=self.app.open_manual)
         menu.add_command(label="프로그램 정보", command=self.app.show_program_info)
         menu.add_command(label="전체 종료", command=self.app.close)
         menu.tk_popup(event.x_root, event.y_root)
@@ -1667,6 +1672,16 @@ class App:
             self.plan_settings.win.focus_force()
             return
         self.plan_settings = PlanSettings(self)
+
+    def open_manual(self):
+        try:
+            os.startfile(str(MANUAL_FILE))
+        except OSError as exc:
+            messagebox.showerror(
+                "사용 설명서",
+                f"설명서를 열지 못했어요. PDF를 열 수 있는 프로그램이 있는지 확인해 주세요.\n\n"
+                f"{MANUAL_FILE}\n\n{exc}",
+                parent=self.mascots[0].win if self.mascots else self.root)
 
     def show_program_info(self):
         parent = self.mascots[0].win if self.mascots else self.root
